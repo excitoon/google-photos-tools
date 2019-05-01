@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import pickle
+import time
+import webbrowser
+
+import apiclient.discovery
+import google_auth_oauthlib.flow
+import google.auth.transport.requests
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--camera', type=str, help='filter photos by camera model')
+args = parser.parse_args()
+
+# Setup the Photo v1 API
+SCOPES = ['https://www.googleapis.com/auth/photoslibrary.readonly']
+
+if True:
+    creds = None
+
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(google.auth.transport.requests.Request())
+        else:
+            flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES)
+            creds = flow.run_local_server()
+        # Save the credentials for the next run
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+
+service = apiclient.discovery.build('photoslibrary', 'v1', credentials=creds)
+
+albums = {}
+results = service.albums().list(pageSize=50).execute()
+assert 'nextPageToken' not in results
+items = results.get('albums', [])
+if not items:
+    print('No albums found.')
+else:
+    print('Albums:')
+    for item in items:
+        print('{0} ({1})'.format(item['title'], item['id']))
+        albums[item['id']] = item['title']
+
+photos = set()
+photos_filenames = set()
+nextPageToken = None
+while True:
+    results = service.mediaItems().list(pageSize=100, pageToken=nextPageToken).execute()
+    for item in results['mediaItems']:
+        if not args.camera or item['mediaMetadata']['photo'].get('cameraModel') == args.camera:
+            photos.add(item['id'])
+            photos_filenames.add(item['filename'])
+    if 'nextPageToken' not in results:
+        break
+    nextPageToken = results['nextPageToken']
+    print(end='.', flush=True)
+print()
+
+print('Total photos:', len(photos))
+
+for album_id in albums.keys():
+    nextPageToken = None
+    while True:
+        results = service.mediaItems().search(body={'pageSize':100, 'albumId':album_id, 'pageToken':nextPageToken}).execute()
+        if 'mediaItems' in results:
+            for item in results['mediaItems']:
+                if not args.camera or item['mediaMetadata']['photo'].get('cameraModel') == args.camera:
+                    photos.discard(item['id'])
+                    photos_filenames.discard(item['filename'])
+        if 'nextPageToken' not in results:
+            break
+        nextPageToken = results['nextPageToken']
+
+print('Photos without an album:', len(photos))
+
+while photos_filenames:
+    bucket = []
+    while photos_filenames and len(bucket) < 16:
+        bucket.append(photos_filenames.pop())
+    webbrowser.open("https://photos.google.com/search/'" + "'%20%7C%20'".join(bucket) + "'")
+
+#results = service.albums().create(body={'album':{'title':str(time.time())}}).execute()
+#album_id = results['id']
+#while photos:
+#    bucket = []
+#    while photos and len(bucket) < 10:
+#        bucket.append(photos.pop())
+#    print(bucket)
+#    results = service.albums().batchAddMediaItems(albumId=album_id, body={'mediaItemIds':bucket}).execute()
+#    print('Added {}, remaining {}'.format(len(bucket), len(photos)))
+# ONE CAN NOT SIMPLY ADD PHOTOS WHICH HE DID NOT UPLOADED TO AN ALBUM! HTTP ERROR 400
