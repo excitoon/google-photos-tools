@@ -2,7 +2,7 @@
 
 ### `find-photos-without-album`
 
-Finds photos without album. After finding opens few browser windows where required photos are selected.
+Finds photos without album and opens few browser windows where the photos are selected.
 
 #### Dependencies
 
